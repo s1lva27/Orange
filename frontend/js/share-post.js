@@ -5,11 +5,11 @@
 class SharePostManager {
     constructor() {
         this.modal = null;
-        this.currentPostId = null;
         this.selectedUsers = new Set();
-        this.allUsers = [];
-        this.filteredUsers = [];
+        this.currentPostId = null;
+        this.searchTimeout = null;
         this.isLoading = false;
+        
         this.init();
     }
 
@@ -19,54 +19,56 @@ class SharePostManager {
     }
 
     createModal() {
+        // Verificar se o modal já existe
+        if (document.getElementById('shareModal')) {
+            this.modal = document.getElementById('shareModal');
+            return;
+        }
+
         const modalHTML = `
-            <div id="sharePostModal" class="share-modal-overlay">
+            <div id="shareModal" class="share-modal-overlay">
                 <div class="share-modal">
                     <div class="share-modal-header">
                         <h3 class="share-modal-title">
                             <i class="fas fa-share"></i>
                             Partilhar Publicação
                         </h3>
-                        <button class="share-close-btn" onclick="sharePostManager.closeModal()">
+                        <button class="share-close-btn" type="button">
                             <i class="fas fa-times"></i>
                         </button>
                     </div>
                     
                     <div class="share-modal-body">
-                        <!-- Preview da publicação -->
                         <div class="share-post-preview" id="sharePostPreview">
-                            <!-- Conteúdo será preenchido dinamicamente -->
+                            <!-- Preview da publicação será inserido aqui -->
                         </div>
                         
-                        <!-- Mensagem opcional -->
                         <div class="share-message-group">
-                            <label class="share-message-label">Adicionar mensagem (opcional)</label>
+                            <label class="share-message-label">Mensagem (opcional)</label>
                             <textarea 
-                                id="shareMessage" 
                                 class="share-message-input" 
-                                placeholder="Escreva uma mensagem para acompanhar a publicação..."
+                                id="shareMessage" 
+                                placeholder="Adicione uma mensagem à sua partilha..."
+                                rows="3"
                                 maxlength="500"
                             ></textarea>
                         </div>
                         
-                        <!-- Seleção de utilizadores -->
                         <div class="share-users-section">
-                            <label class="share-users-label">
-                                Selecionar destinatários
-                                <span id="shareSelectedCount" class="share-selected-count" style="display: none;">0</span>
-                            </label>
+                            <label class="share-users-label">Selecionar utilizadores</label>
                             
                             <div class="share-search-container">
                                 <input 
                                     type="text" 
-                                    id="shareSearchInput" 
                                     class="share-search-input" 
+                                    id="shareUserSearch" 
                                     placeholder="Pesquisar utilizadores..."
+                                    autocomplete="off"
                                 >
                             </div>
                             
                             <div class="share-users-list" id="shareUsersList">
-                                <div class="share-loading active">
+                                <div class="share-loading">
                                     <i class="fas fa-spinner"></i>
                                     Carregando utilizadores...
                                 </div>
@@ -77,14 +79,12 @@ class SharePostManager {
                     <div class="share-modal-footer">
                         <div class="share-selected-info">
                             <i class="fas fa-users"></i>
-                            <span id="shareSelectedInfo">Nenhum utilizador selecionado</span>
+                            <span id="shareSelectedCount">0 utilizadores selecionados</span>
                         </div>
                         
                         <div class="share-modal-actions">
-                            <button class="share-cancel-btn" onclick="sharePostManager.closeModal()">
-                                Cancelar
-                            </button>
-                            <button class="share-send-btn" id="shareSendBtn" onclick="sharePostManager.sendShares()" disabled>
+                            <button class="share-cancel-btn" type="button">Cancelar</button>
+                            <button class="share-send-btn" type="button" disabled>
                                 <i class="fas fa-paper-plane"></i>
                                 Partilhar
                             </button>
@@ -95,467 +95,448 @@ class SharePostManager {
         `;
 
         document.body.insertAdjacentHTML('beforeend', modalHTML);
-        this.modal = document.getElementById('sharePostModal');
+        this.modal = document.getElementById('shareModal');
     }
 
     bindEvents() {
-        // Pesquisa de utilizadores
-        const searchInput = document.getElementById('shareSearchInput');
-        searchInput.addEventListener('input', (e) => {
-            this.filterUsers(e.target.value);
-        });
-
-        // Fechar modal ao clicar fora
-        this.modal.addEventListener('click', (e) => {
-            if (e.target === this.modal) {
-                this.closeModal();
-            }
-        });
-
-        // Tecla ESC para fechar
-        document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape' && this.modal.classList.contains('active')) {
-                this.closeModal();
-            }
-        });
-    }
-    async loadUsers() {
-        const usersList = document.getElementById('shareUsersList');
-        usersList.innerHTML = '<div class="share-loading active"><i class="fas fa-spinner"></i> Carregando utilizadores...</div>';
-
-        try {
-            // Buscar conversas do utilizador
-            const response = await fetch('../backend/get_conversations.php');
-            if (!response.ok) throw new Error('Erro ao carregar conversas');
-
-            const data = await response.json();
-
-            if (!data.success || !data.conversations) {
-                throw new Error('Nenhuma conversa encontrada');
-            }
-
-            // Processar os dados para extrair os utilizadores
-            this.allUsers = data.conversations.map(conv => {
-                // Garantir que temos os dados mínimos necessários
-                if (!conv.other_user || !conv.other_user.id) {
-                    return null;
-                }
-
-                return {
-                    id: conv.other_user.id,
-                    nome_completo: conv.other_user.nome || conv.other_user.nick || 'Utilizador',
-                    nick: conv.other_user.nick || 'user' + conv.other_user.id,
-                    foto_perfil: conv.other_user.foto || 'default-profile.jpg'
-                };
-            }).filter(user => user !== null); // Remover nulls se houver
-
-            this.filteredUsers = [...this.allUsers];
-
-            if (this.allUsers.length === 0) {
-                this.showNoUsersMessage("Você ainda não tem conversas com outros utilizadores");
-            } else {
-                this.renderUsers();
-            }
-        } catch (error) {
-            console.error('Erro ao carregar utilizadores:', error);
-            this.showNoUsersMessage(error.message || 'Erro ao carregar utilizadores');
-        }
-    }
-
-    // Adicione este método para mostrar mensagens de erro personalizadas
-    showNoUsersMessage(message = 'Nenhum utilizador encontrado') {
-        const usersList = document.getElementById('shareUsersList');
-        usersList.innerHTML = `
-        <div class="share-no-users">
-            <i class="fas fa-users-slash"></i>
-            <p>${this.escapeHtml(message)}</p>
-            <small>Tente novamente mais tarde</small>
-        </div>
-    `;
-    }
-
-    // Adicionar esta função à classe SharePostManager
-    async loadPostPreview(postId) {
-        try {
-            const response = await fetch(`../backend/get_post.php?id=${postId}`);
-            const post = await response.json();
-
-            if (post.error) {
-                throw new Error(post.error);
-            }
-
-            // Obter mídias da publicação
-            const mediaResponse = await fetch(`../backend/get_post_images?id=${postId}`);
-            const medias = await mediaResponse.json();
-
-            // Obter dados da enquete se for do tipo poll
-            let pollHTML = '';
-            if (post.tipo === 'poll') {
-                const pollResponse = await fetch(`../backend/get_poll_data.php?post_id=${postId}`);
-                const pollData = await pollResponse.json();
-
-                if (pollData && !pollData.error) {
-                    pollHTML = `
-                    <div class="share-poll-preview">
-                        <h4 class="share-poll-question">${this.escapeHtml(pollData.poll.pergunta)}</h4>
-                        <div class="share-poll-options">
-                            ${pollData.opcoes.map(opcao => `
-                                <div class="share-poll-option">
-                                    <div class="share-poll-option-bar" style="width: ${opcao.percentagem}%"></div>
-                                    <span class="share-poll-option-text">${this.escapeHtml(opcao.texto)}</span>
-                                    <span class="share-poll-option-percent">${opcao.percentagem}%</span>
-                                </div>
-                            `).join('')}
-                        </div>
-                        <div class="share-poll-meta">
-                            <span class="share-poll-total">${pollData.poll.total_votos} votos</span>
-                            <span class="share-poll-status ${pollData.poll.expirada ? 'expired' : 'active'}">
-                                ${pollData.poll.expirada ? 'Enquete encerrada' : 'Enquete ativa'}
-                            </span>
-                        </div>
-                    </div>
-                `;
-                }
-            }
-
-            // Construir HTML para mídias
-            let mediaHTML = '';
-            if (medias.length > 0) {
-                const imageMedias = medias.filter(m => m.tipo === 'image');
-                const videoMedias = medias.filter(m => m.tipo === 'video');
-
-                if (imageMedias.length > 0) {
-                    mediaHTML += `
-                    <div class="share-media-preview">
-                        <div class="share-media-count">
-                            <i class="fas fa-images"></i>
-                            ${imageMedias.length} ${imageMedias.length > 1 ? 'imagens' : 'imagem'}
-                        </div>
-                        <img src="images/publicacoes/${imageMedias[0].url}" 
-                             alt="Preview" class="share-media-thumbnail">
-                    </div>
-                `;
-                }
-
-                if (videoMedias.length > 0) {
-                    mediaHTML += `
-                    <div class="share-media-preview">
-                        <div class="share-media-count">
-                            <i class="fas fa-video"></i>
-                            ${videoMedias.length} ${videoMedias.length > 1 ? 'vídeos' : 'vídeo'}
-                        </div>
-                        <video class="share-media-thumbnail" muted playsinline>
-                            <source src="images/publicacoes/${videoMedias[0].url}" type="video/mp4">
-                        </video>
-                    </div>
-                `;
-                }
-            }
-
-            const previewHTML = `
-            <div class="share-post-preview-header">
-                <img src="images/perfil/${post.foto_perfil || 'default-profile.jpg'}" 
-                     alt="${post.nick}" class="share-post-preview-avatar">
-                <div class="share-post-preview-info">
-                    <h4>${post.nick}</h4>
-                    <p>${this.formatDate(post.data_criacao)}</p>
-                </div>
-            </div>
-            ${post.conteudo ? `<p class="share-post-preview-content">${this.escapeHtml(post.conteudo)}</p>` : ''}
-            ${pollHTML}
-            ${mediaHTML}
-        `;
-
-            document.getElementById('sharePostPreview').innerHTML = previewHTML;
-
-            // Inicializar player de vídeo se existir
-            const video = document.querySelector('.share-media-thumbnail');
-            if (video) {
-                video.volume = 0;
-                video.addEventListener('click', () => {
-                    if (video.paused) {
-                        video.play();
-                    } else {
-                        video.pause();
+        // Event listeners para o modal
+        document.addEventListener('click', (e) => {
+            if (e.target.matches('[onclick*="openShareModal"]') || 
+                e.target.closest('[onclick*="openShareModal"]')) {
+                e.preventDefault();
+                const button = e.target.closest('button');
+                if (button) {
+                    const postId = this.extractPostIdFromButton(button);
+                    if (postId) {
+                        this.openModal(postId);
                     }
-                });
+                }
             }
-        } catch (error) {
-            console.error('Erro ao carregar preview:', error);
-            document.getElementById('sharePostPreview').innerHTML = `
-            <p style="color: var(--color-danger); text-align: center;">
-                Erro ao carregar preview da publicação
-            </p>
-        `;
-        }
+        });
+
+        // Fechar modal
+        document.addEventListener('click', (e) => {
+            if (e.target.classList.contains('share-close-btn') || 
+                e.target.closest('.share-close-btn')) {
+                this.closeModal();
+            }
+            
+            if (e.target.classList.contains('share-cancel-btn')) {
+                this.closeModal();
+            }
+            
+            if (e.target.classList.contains('share-modal-overlay')) {
+                this.closeModal();
+            }
+        });
+
+        // Pesquisa de utilizadores
+        document.addEventListener('input', (e) => {
+            if (e.target.id === 'shareUserSearch') {
+                this.handleSearch(e.target.value);
+            }
+        });
+
+        // Seleção de utilizadores
+        document.addEventListener('change', (e) => {
+            if (e.target.classList.contains('share-user-checkbox')) {
+                this.handleUserSelection(e.target);
+            }
+        });
+
+        // Enviar partilha
+        document.addEventListener('click', (e) => {
+            if (e.target.classList.contains('share-send-btn') || 
+                e.target.closest('.share-send-btn')) {
+                this.handleShare();
+            }
+        });
+
+        // Fechar modal com ESC
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && this.modal && this.modal.classList.contains('active')) {
+                this.closeModal();
+            }
+        });
     }
+
+    extractPostIdFromButton(button) {
+        // Tentar extrair o ID da publicação do botão
+        const postElement = button.closest('.post');
+        if (postElement) {
+            return postElement.getAttribute('data-post-id');
+        }
+        
+        // Fallback: tentar extrair do onclick
+        const onclick = button.getAttribute('onclick');
+        if (onclick) {
+            const match = onclick.match(/openShareModal\((\d+)\)/);
+            if (match) {
+                return match[1];
+            }
+        }
+        
+        return null;
+    }
+
     async openModal(postId) {
+        if (!postId) {
+            console.error('ID da publicação não fornecido');
+            return;
+        }
+
         this.currentPostId = postId;
         this.selectedUsers.clear();
-        this.updateSelectedCount();
-
-        // Limpar campos
-        document.getElementById('shareMessage').value = '';
-        document.getElementById('shareSearchInput').value = '';
-
+        
         // Mostrar modal
         this.modal.classList.add('active');
         document.body.style.overflow = 'hidden';
-
+        
         // Carregar preview da publicação
         await this.loadPostPreview(postId);
-
-        // Carregar utilizadores
-        await this.loadUsers();
+        
+        // Carregar utilizadores iniciais
+        await this.loadInitialUsers();
+        
+        // Limpar pesquisa e mensagem
+        document.getElementById('shareUserSearch').value = '';
+        document.getElementById('shareMessage').value = '';
+        
+        // Atualizar contador
+        this.updateSelectedCount();
     }
 
     closeModal() {
-        this.modal.classList.remove('active');
-        document.body.style.overflow = 'auto';
-        this.currentPostId = null;
-        this.selectedUsers.clear();
-        this.allUsers = [];
-        this.filteredUsers = [];
+        if (this.modal) {
+            this.modal.classList.remove('active');
+            document.body.style.overflow = 'auto';
+            
+            // Limpar dados
+            this.currentPostId = null;
+            this.selectedUsers.clear();
+            this.updateSelectedCount();
+        }
     }
 
     async loadPostPreview(postId) {
         try {
             const response = await fetch(`../backend/get_post.php?id=${postId}`);
-            const post = await response.json();
-
-            if (post.error) {
-                throw new Error(post.error);
+            
+            if (!response.ok) {
+                throw new Error('Erro ao carregar publicação');
             }
-
-            const previewHTML = `
+            
+            const post = await response.json();
+            
+            const previewContainer = document.getElementById('sharePostPreview');
+            previewContainer.innerHTML = `
                 <div class="share-post-preview-header">
                     <img src="images/perfil/${post.foto_perfil || 'default-profile.jpg'}" 
                          alt="${post.nick}" class="share-post-preview-avatar">
                     <div class="share-post-preview-info">
                         <h4>${post.nick}</h4>
-                        <p>${this.formatDate(post.data_criacao)}</p>
+                        <p>${new Date(post.data_criacao).toLocaleDateString('pt-PT')}</p>
                     </div>
                 </div>
-                ${post.conteudo ? `<p class="share-post-preview-content">${this.escapeHtml(post.conteudo)}</p>` : ''}
+                ${post.conteudo ? `<p class="share-post-preview-content">${post.conteudo}</p>` : ''}
+                ${this.generateMediaPreview(post.images)}
             `;
-
-            document.getElementById('sharePostPreview').innerHTML = previewHTML;
+            
         } catch (error) {
             console.error('Erro ao carregar preview:', error);
             document.getElementById('sharePostPreview').innerHTML = `
-                <p style="color: var(--color-danger); text-align: center;">
-                    Erro ao carregar preview da publicação
-                </p>
-            `;
-        }
-    }
-    // Adicione este método para mostrar mensagem quando não há utilizadores
-    showNoUsersMessage() {
-        const usersList = document.getElementById('shareUsersList');
-        usersList.innerHTML = `
-        <div class="share-no-users">
-            <i class="fas fa-users-slash"></i>
-            <p>Nenhum utilizador encontrado</p>
-            <small>Tente pesquisar com termos diferentes</small>
-        </div>
-    `;
-    }
-
-    async loadUsers() {
-        const usersList = document.getElementById('shareUsersList');
-
-        try {
-            const response = await fetch('../backend/search_users.php?q=');
-            const users = await response.json();
-
-            this.allUsers = users;
-            this.filteredUsers = users;
-            this.renderUsers();
-        } catch (error) {
-            console.error('Erro ao carregar utilizadores:', error);
-            usersList.innerHTML = `
-                <div class="share-no-users">
+                <div class="error-loading">
                     <i class="fas fa-exclamation-triangle"></i>
-                    <p>Erro ao carregar utilizadores</p>
+                    <p>Erro ao carregar publicação</p>
                 </div>
             `;
         }
     }
 
-    filterUsers(searchTerm) {
-        const term = searchTerm.toLowerCase().trim();
-        const usersList = document.getElementById('shareUsersList');
-
-        if (term === '') {
-            this.filteredUsers = this.allUsers;
+    generateMediaPreview(images) {
+        if (!images || images.length === 0) return '';
+        
+        const firstImage = images[0];
+        const mediaCount = images.length;
+        
+        if (firstImage.tipo === 'video') {
+            return `
+                <div class="share-media-preview">
+                    <video class="share-media-thumbnail" muted>
+                        <source src="images/publicacoes/${firstImage.url}" type="video/mp4">
+                    </video>
+                    ${mediaCount > 1 ? `<div class="share-media-count">+${mediaCount - 1}</div>` : ''}
+                </div>
+            `;
         } else {
-            this.filteredUsers = this.allUsers.filter(user => {
-                const fullName = user.nome_completo?.toLowerCase() || '';
-                const nick = user.nick?.toLowerCase() || '';
-                return fullName.includes(term) || nick.includes(term);
-            });
-        }
-
-        if (this.filteredUsers.length === 0) {
-            this.showNoUsersMessage();
-        } else {
-            this.renderUsers();
+            return `
+                <div class="share-media-preview">
+                    <img src="images/publicacoes/${firstImage.url}" 
+                         alt="Preview" class="share-media-thumbnail">
+                    ${mediaCount > 1 ? `<div class="share-media-count">+${mediaCount - 1}</div>` : ''}
+                </div>
+            `;
         }
     }
 
-    renderUsers() {
-        const usersList = document.getElementById('shareUsersList');
+    async loadInitialUsers() {
+        try {
+            this.showLoading(true);
+            
+            const response = await fetch('../backend/search_users.php');
+            
+            if (!response.ok) {
+                throw new Error(`Erro HTTP: ${response.status}`);
+            }
+            
+            const users = await response.json();
+            
+            if (Array.isArray(users)) {
+                this.displayUsers(users);
+            } else {
+                throw new Error('Resposta inválida do servidor');
+            }
+            
+        } catch (error) {
+            console.error('Erro ao carregar utilizadores:', error);
+            this.showError('Erro ao carregar utilizadores. Tente pesquisar por um nome específico.');
+        } finally {
+            this.showLoading(false);
+        }
+    }
 
-        if (this.filteredUsers.length === 0) {
-            usersList.innerHTML = `
-            <div class="share-no-users">
-                <i class="fas fa-users-slash"></i>
-                <p>Nenhum utilizador encontrado</p>
-                <small>Tente pesquisar com termos diferentes</small>
-            </div>
-        `;
+    handleSearch(query) {
+        // Debounce da pesquisa
+        clearTimeout(this.searchTimeout);
+        
+        this.searchTimeout = setTimeout(async () => {
+            if (this.isLoading) return;
+            
+            try {
+                this.showLoading(true);
+                
+                const url = query.trim() ? 
+                    `../backend/search_users.php?q=${encodeURIComponent(query.trim())}` :
+                    '../backend/search_users.php';
+                
+                const response = await fetch(url);
+                
+                if (!response.ok) {
+                    throw new Error(`Erro HTTP: ${response.status}`);
+                }
+                
+                const users = await response.json();
+                
+                if (Array.isArray(users)) {
+                    this.displayUsers(users);
+                } else {
+                    throw new Error('Resposta inválida do servidor');
+                }
+                
+            } catch (error) {
+                console.error('Erro na pesquisa:', error);
+                this.showError('Erro ao pesquisar utilizadores');
+            } finally {
+                this.showLoading(false);
+            }
+        }, 300);
+    }
+
+    displayUsers(users) {
+        const container = document.getElementById('shareUsersList');
+        
+        if (users.length === 0) {
+            container.innerHTML = `
+                <div class="share-no-users">
+                    <i class="fas fa-users-slash"></i>
+                    <p>Nenhum utilizador encontrado</p>
+                    <small>Tente pesquisar por um nome diferente</small>
+                </div>
+            `;
             return;
         }
-
-        const usersHTML = this.filteredUsers.map(user => `
-        <div class="share-user-item ${this.selectedUsers.has(user.id) ? 'selected' : ''}" 
-             onclick="sharePostManager.toggleUser(${user.id})">
-            <input type="checkbox" 
-                   class="share-user-checkbox" 
-                   ${this.selectedUsers.has(user.id) ? 'checked' : ''}
-                   onchange="sharePostManager.toggleUser(${user.id})"
-                   onclick="event.stopPropagation()">
-            <img src="images/perfil/${user.foto_perfil || 'default-profile.jpg'}" 
-                 alt="${user.nome_completo}" class="share-user-avatar">
-            <div class="share-user-info">
-                <h4 class="share-user-name">${this.escapeHtml(user.nome_completo)}</h4>
-                <p class="share-user-nick">@${this.escapeHtml(user.nick)}</p>
+        
+        container.innerHTML = users.map(user => `
+            <div class="share-user-item ${this.selectedUsers.has(user.id) ? 'selected' : ''}">
+                <input type="checkbox" 
+                       class="share-user-checkbox" 
+                       data-user-id="${user.id}"
+                       ${this.selectedUsers.has(user.id) ? 'checked' : ''}>
+                <img src="images/perfil/${user.foto_perfil || 'default-profile.jpg'}" 
+                     alt="${user.nome_completo}" class="share-user-avatar">
+                <div class="share-user-info">
+                    <h4 class="share-user-name">${user.nome_completo}</h4>
+                    <p class="share-user-nick">@${user.nick}</p>
+                </div>
             </div>
-        </div>
-    `).join('');
-
-        usersList.innerHTML = usersHTML;
+        `).join('');
     }
 
-
-
-    toggleUser(userId) {
-        if (this.selectedUsers.has(userId)) {
-            this.selectedUsers.delete(userId);
-        } else {
-            this.selectedUsers.add(userId);
+    showLoading(show) {
+        this.isLoading = show;
+        const container = document.getElementById('shareUsersList');
+        
+        if (show) {
+            container.innerHTML = `
+                <div class="share-loading">
+                    <i class="fas fa-spinner"></i>
+                    Carregando utilizadores...
+                </div>
+            `;
         }
+    }
 
+    showError(message) {
+        const container = document.getElementById('shareUsersList');
+        container.innerHTML = `
+            <div class="share-no-users">
+                <i class="fas fa-exclamation-triangle"></i>
+                <p>${message}</p>
+                <small>Verifique sua conexão e tente novamente</small>
+            </div>
+        `;
+    }
+
+    handleUserSelection(checkbox) {
+        const userId = parseInt(checkbox.dataset.userId);
+        const userItem = checkbox.closest('.share-user-item');
+        
+        if (checkbox.checked) {
+            this.selectedUsers.add(userId);
+            userItem.classList.add('selected');
+        } else {
+            this.selectedUsers.delete(userId);
+            userItem.classList.remove('selected');
+        }
+        
         this.updateSelectedCount();
-        this.renderUsers();
     }
 
     updateSelectedCount() {
         const count = this.selectedUsers.size;
         const countElement = document.getElementById('shareSelectedCount');
-        const infoElement = document.getElementById('shareSelectedInfo');
-        const sendBtn = document.getElementById('shareSendBtn');
-
-        countElement.textContent = count;
-        countElement.style.display = count > 0 ? 'inline' : 'none';
-
-        if (count === 0) {
-            infoElement.textContent = 'Nenhum utilizador selecionado';
-            sendBtn.disabled = true;
-        } else if (count === 1) {
-            infoElement.textContent = '1 utilizador selecionado';
-            sendBtn.disabled = false;
-        } else {
-            infoElement.textContent = `${count} utilizadores selecionados`;
-            sendBtn.disabled = false;
-        }
+        const sendButton = document.querySelector('.share-send-btn');
+        
+        countElement.textContent = `${count} utilizador${count !== 1 ? 'es' : ''} selecionado${count !== 1 ? 's' : ''}`;
+        sendButton.disabled = count === 0;
     }
 
-    async sendShares() {
-        if (this.isLoading || this.selectedUsers.size === 0) return;
-
-        this.isLoading = true;
-        const sendBtn = document.getElementById('shareSendBtn');
-        const originalText = sendBtn.innerHTML;
-
-        sendBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Enviando...';
-        sendBtn.disabled = true;
-
+    async handleShare() {
+        if (this.selectedUsers.size === 0 || !this.currentPostId) {
+            return;
+        }
+        
+        const sendButton = document.querySelector('.share-send-btn');
+        const originalText = sendButton.innerHTML;
+        
         try {
+            // Mostrar loading
+            sendButton.disabled = true;
+            sendButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Partilhando...';
+            
+            const message = document.getElementById('shareMessage').value.trim();
+            const userIds = Array.from(this.selectedUsers);
+            
+            // Criar link direto para a publicação
+            const postLink = `${window.location.protocol}//${window.location.host}${window.location.pathname.replace(/\/[^\/]*$/, '')}/publicacao.php?id=${this.currentPostId}`;
+            
             const formData = new FormData();
             formData.append('post_id', this.currentPostId);
-            formData.append('user_ids', JSON.stringify(Array.from(this.selectedUsers)));
-            formData.append('message', document.getElementById('shareMessage').value);
-
+            formData.append('user_ids', JSON.stringify(userIds));
+            formData.append('message', message);
+            formData.append('post_link', postLink); // Adicionar o link direto
+            
             const response = await fetch('../backend/share_post.php', {
                 method: 'POST',
                 body: formData
             });
-
-            const result = await response.json();
-
-            if (result.success) {
-                this.showToast(`Publicação partilhada com ${result.shared_count} utilizador(es)!`, 'success');
+            
+            const data = await response.json();
+            
+            if (data.success) {
+                this.showSuccessMessage(`Publicação partilhada com ${data.shared_count} utilizador${data.shared_count !== 1 ? 'es' : ''}!`);
                 this.closeModal();
-
-                // Animação de sucesso no botão de partilha original
-                const shareButton = document.querySelector(`[data-post-id="${this.currentPostId}"] .share-btn`);
-                if (shareButton) {
-                    shareButton.classList.add('share-success-animation');
-                    setTimeout(() => {
-                        shareButton.classList.remove('share-success-animation');
-                    }, 600);
-                }
             } else {
-                this.showToast(result.message || 'Erro ao partilhar publicação', 'error');
+                throw new Error(data.message || 'Erro ao partilhar publicação');
             }
+            
         } catch (error) {
             console.error('Erro ao partilhar:', error);
-            this.showToast('Erro de conexão. Tente novamente.', 'error');
+            this.showErrorMessage(error.message || 'Erro ao partilhar publicação');
         } finally {
-            this.isLoading = false;
-            sendBtn.innerHTML = originalText;
-            sendBtn.disabled = this.selectedUsers.size === 0;
+            // Restaurar botão
+            sendButton.disabled = this.selectedUsers.size === 0;
+            sendButton.innerHTML = originalText;
         }
     }
 
-    showToast(message, type = 'info') {
-        // Usar o sistema de toast existente se disponível
+    showSuccessMessage(message) {
+        this.showToast(message, 'success');
+    }
+
+    showErrorMessage(message) {
+        this.showToast(message, 'error');
+    }
+
+    showToast(message, type = 'success') {
+        // Verificar se existe uma função global de toast
         if (typeof showToast === 'function') {
             showToast(message);
-        } else {
-            // Fallback para alert
-            alert(message);
+            return;
         }
-    }
-
-    formatDate(dateString) {
-        const date = new Date(dateString);
-        return date.toLocaleDateString('pt-PT', {
-            day: '2-digit',
-            month: '2-digit',
-            year: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit'
-        });
-    }
-
-    escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
+        
+        // Criar toast simples se não existir
+        const toast = document.createElement('div');
+        toast.className = `toast ${type}`;
+        toast.style.cssText = `
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: ${type === 'success' ? '#10b981' : '#ef4444'};
+            color: white;
+            padding: 12px 24px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            z-index: 10000;
+            opacity: 0;
+            transform: translateY(100px);
+            transition: all 0.3s ease;
+        `;
+        toast.textContent = message;
+        
+        document.body.appendChild(toast);
+        
+        // Animar entrada
+        setTimeout(() => {
+            toast.style.opacity = '1';
+            toast.style.transform = 'translateY(0)';
+        }, 10);
+        
+        // Remover após 3 segundos
+        setTimeout(() => {
+            toast.style.opacity = '0';
+            toast.style.transform = 'translateY(100px)';
+            setTimeout(() => {
+                if (toast.parentNode) {
+                    toast.parentNode.removeChild(toast);
+                }
+            }, 300);
+        }, 3000);
     }
 }
 
-// Inicializar o SharePostManager quando o DOM estiver pronto
-document.addEventListener('DOMContentLoaded', () => {
-    window.sharePostManager = new SharePostManager();
+// Função global para abrir o modal (compatibilidade com onclick)
+function openShareModal(postId) {
+    if (window.shareManager) {
+        window.shareManager.openModal(postId);
+    }
+}
+
+// Inicializar quando o DOM estiver pronto
+document.addEventListener('DOMContentLoaded', function() {
+    window.shareManager = new SharePostManager();
 });
 
-// Função global para abrir o modal de partilha
-function openShareModal(postId) {
-    if (window.sharePostManager) {
-        window.sharePostManager.openModal(postId);
-    }
-}
-
+// Exportar para uso global
+window.SharePostManager = SharePostManager;
+window.openShareModal = openShareModal;

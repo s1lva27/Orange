@@ -50,7 +50,7 @@ if ($afterId == 0) {
 }
 
 // Buscar mensagens
-$sqlMessages = "SELECT * FROM mensagens 
+$sqlMessages = "SELECT *, COALESCE(tipo_mensagem, 'text') as tipo_mensagem FROM mensagens 
                 WHERE conversa_id = ?";
 
 // Se afterId for fornecido, buscar apenas mensagens mais recentes

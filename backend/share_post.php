@@ -18,6 +18,7 @@ $currentUserId = $_SESSION['id'];
 $postId = isset($_POST['post_id']) ? intval($_POST['post_id']) : 0;
 $userIds = isset($_POST['user_ids']) ? json_decode($_POST['user_ids']) : [];
 $message = isset($_POST['message']) ? trim($_POST['message']) : '';
+$postLink = isset($_POST['post_link']) ? trim($_POST['post_link']) : '';
 
 if ($postId <= 0) {
     echo json_encode(['success' => false, 'message' => 'ID da publicação inválido']);
@@ -31,9 +32,10 @@ if (empty($userIds) || !is_array($userIds)) {
 
 try {
     // Obter informações completas da publicação
-    $sqlPost = "SELECT p.*, u.nick, u.nome_completo, p.tipo 
+    $sqlPost = "SELECT p.*, u.nick, u.nome_completo, pr.foto_perfil 
                 FROM publicacoes p 
                 JOIN utilizadores u ON p.id_utilizador = u.id 
+                LEFT JOIN perfis pr ON u.id = pr.id_utilizador
                 WHERE p.id_publicacao = ? AND p.deletado_em = '0000-00-00 00:00:00'";
     $stmtPost = $con->prepare($sqlPost);
     $stmtPost->bind_param("i", $postId);
@@ -62,7 +64,7 @@ try {
     // Obter dados da enquete se for do tipo poll
     $pollData = null;
     if ($post['tipo'] === 'poll') {
-        $sqlPoll = "SELECT p.id, p.pergunta, p.data_expiracao 
+        $sqlPoll = "SELECT p.id, p.pergunta, p.data_expiracao, p.total_votos
                    FROM polls p 
                    WHERE p.publicacao_id = ?";
         $stmtPoll = $con->prepare($sqlPoll);
@@ -94,51 +96,35 @@ try {
         }
     }
     
-    // Criar mensagem de partilha formatada
-    $shareMessage = "📤 Publicação partilhada por " . $_SESSION['nome_completo'] . "\n\n";
+    // Criar mensagem de partilha estruturada em JSON
+    $shareData = [
+        'type' => 'shared_post',
+        'shared_by' => [
+            'id' => $currentUserId,
+            'name' => $_SESSION['nome_completo'],
+            'nick' => $_SESSION['nick']
+        ],
+        'message' => $message,
+        'post_link' => $postLink, // Adicionar o link direto
+        'post' => [
+            'id' => $post['id_publicacao'],
+            'author' => [
+                'id' => $post['id_utilizador'],
+                'name' => $post['nome_completo'],
+                'nick' => $post['nick'],
+                'photo' => $post['foto_perfil']
+            ],
+            'content' => $post['conteudo'],
+            'type' => $post['tipo'],
+            'date' => $post['data_criacao'],
+            'likes' => $post['likes'],
+            'medias' => $medias,
+            'poll' => $pollData
+        ],
+        'timestamp' => date('Y-m-d H:i:s')
+    ];
     
-    if (!empty($message)) {
-        $shareMessage .= "💬 " . $message . "\n\n";
-    }
-    
-    $shareMessage .= "👤 @" . $post['nick'] . " (" . $post['nome_completo'] . ")\n";
-    $shareMessage .= "📅 " . date('d/m/Y H:i', strtotime($post['data_criacao'])) . "\n\n";
-    
-    if (!empty($post['conteudo'])) {
-        $shareMessage .= "📝 " . $post['conteudo'] . "\n\n";
-    }
-    
-    // Adicionar informações sobre mídias
-    if (!empty($medias)) {
-        $mediaTypes = array_count_values(array_column($medias, 'tipo'));
-        $mediaInfo = [];
-        
-        if (isset($mediaTypes['image'])) {
-            $mediaInfo[] = "🖼️ " . $mediaTypes['image'] . " imagem" . ($mediaTypes['image'] > 1 ? 'ns' : '');
-        }
-        
-        if (isset($mediaTypes['video'])) {
-            $mediaInfo[] = "🎬 " . $mediaTypes['video'] . " vídeo" . ($mediaTypes['video'] > 1 ? 's' : '');
-        }
-        
-        $shareMessage .= implode(", ", $mediaInfo) . "\n\n";
-    }
-    
-    // Adicionar informações sobre enquete
-    if ($pollData) {
-        $shareMessage .= "📊 Enquete: " . $pollData['pergunta'] . "\n";
-        $shareMessage .= "⏱️ " . ($pollData['expirada'] ? "Enquete encerrada" : "Enquete ativa") . "\n";
-        $shareMessage .= "🗳️ Total de votos: " . $pollData['total_votos'] . "\n\n";
-        
-        foreach ($pollData['opcoes'] as $option) {
-            $percentage = $pollData['total_votos'] > 0 ? round(($option['votos'] / $pollData['total_votos']) * 100) : 0;
-            $shareMessage .= "▫️ " . $option['opcao_texto'] . " (" . $percentage . "%)\n";
-        }
-        
-        $shareMessage .= "\n";
-    }
-    
-    $shareMessage .= "🔗 Ver publicação: " . $_SERVER['HTTP_HOST'] . "/frontend/perfil.php?id=" . $post['id_utilizador'] . "#post-" . $postId;
+    $shareMessageJson = json_encode($shareData, JSON_UNESCAPED_UNICODE);
     
     $successCount = 0;
     $errors = [];
@@ -186,10 +172,10 @@ try {
         }
         
         if ($conversationId) {
-            // Enviar mensagem
-            $sqlMessage = "INSERT INTO mensagens (conversa_id, remetente_id, conteudo) VALUES (?, ?, ?)";
+            // Enviar mensagem com dados estruturados
+            $sqlMessage = "INSERT INTO mensagens (conversa_id, remetente_id, conteudo, tipo_mensagem) VALUES (?, ?, ?, 'shared_post')";
             $stmtMessage = $con->prepare($sqlMessage);
-            $stmtMessage->bind_param("iis", $conversationId, $currentUserId, $shareMessage);
+            $stmtMessage->bind_param("iis", $conversationId, $currentUserId, $shareMessageJson);
             
             if ($stmtMessage->execute()) {
                 // Atualizar última atividade da conversa
@@ -225,3 +211,4 @@ try {
     error_log('Erro ao partilhar publicação: ' . $e->getMessage());
     echo json_encode(['success' => false, 'message' => 'Erro interno do servidor']);
 }
+?>

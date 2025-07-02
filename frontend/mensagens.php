@@ -15,6 +15,7 @@ $sqlConversas = "SELECT c.id, c.utilizador1_id, c.utilizador2_id, c.ultima_ativi
                         u1.nick as nick1, u1.nome_completo as nome1, p1.foto_perfil as foto1,
                         u2.nick as nick2, u2.nome_completo as nome2, p2.foto_perfil as foto2,
                         (SELECT conteudo FROM mensagens WHERE conversa_id = c.id ORDER BY data_envio DESC LIMIT 1) as ultima_mensagem,
+                        (SELECT tipo_mensagem FROM mensagens WHERE conversa_id = c.id ORDER BY data_envio DESC LIMIT 1) as tipo_ultima_mensagem,
                         (SELECT COUNT(*) FROM mensagens WHERE conversa_id = c.id AND remetente_id != $currentUserId AND lida = 0) as mensagens_nao_lidas
                  FROM conversas c
                  JOIN utilizadores u1 ON c.utilizador1_id = u1.id
@@ -257,6 +258,60 @@ $resultConversas = mysqli_query($con, $sqlConversas);
         .message-status.delivered {
             color: var(--color-primary);
         }
+
+        /* Estilo para publicações partilhadas clicáveis */
+        .shared-post {
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .shared-post:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-lg);
+            border-color: var(--color-primary);
+        }
+
+        .shared-post::after {
+            content: '';
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            width: 20px;
+            height: 20px;
+            background: var(--color-primary);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 10px;
+            color: white;
+            opacity: 0;
+            transition: all var(--transition-normal);
+            z-index: 10;
+        }
+
+        .shared-post:hover::after {
+            opacity: 1;
+            content: "👁";
+        }
+
+        .shared-post-clickable-hint {
+            position: absolute;
+            bottom: 8px;
+            right: 8px;
+            background: rgba(255, 87, 34, 0.9);
+            color: white;
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 0.7rem;
+            font-weight: 500;
+            opacity: 0;
+            transition: opacity 0.2s ease;
+        }
+
+        .shared-post:hover .shared-post-clickable-hint {
+            opacity: 1;
+        }
     </style>
 </head>
 
@@ -290,6 +345,19 @@ $resultConversas = mysqli_query($con, $sqlConversas);
                                 $outroUtilizador = ($conversa['utilizador1_id'] == $currentUserId) ?
                                     ['id' => $conversa['utilizador2_id'], 'nick' => $conversa['nick2'], 'nome' => $conversa['nome2'], 'foto' => $conversa['foto2']] :
                                     ['id' => $conversa['utilizador1_id'], 'nick' => $conversa['nick1'], 'nome' => $conversa['nome1'], 'foto' => $conversa['foto1']];
+                                
+                                // Determinar o texto da última mensagem
+                                $ultimaMensagem = 'Iniciar conversa...';
+                                if ($conversa['ultima_mensagem']) {
+                                    if ($conversa['tipo_ultima_mensagem'] === 'shared_post') {
+                                        $ultimaMensagem = '📤 Publicação partilhada';
+                                    } else {
+                                        $ultimaMensagem = htmlspecialchars(substr($conversa['ultima_mensagem'], 0, 50));
+                                        if (strlen($conversa['ultima_mensagem']) > 50) {
+                                            $ultimaMensagem .= '...';
+                                        }
+                                    }
+                                }
                                 ?>
                                 <div class="conversation-item" data-conversation-id="<?php echo $conversa['id']; ?>"
                                     onclick="openConversation(<?php echo $conversa['id']; ?>, <?php echo $outroUtilizador['id']; ?>)">
@@ -303,11 +371,7 @@ $resultConversas = mysqli_query($con, $sqlConversas);
                                                 <?php echo date('H:i', strtotime($conversa['ultima_atividade'])); ?>
                                             </span>
                                         </div>
-                                        <p class="last-message">
-                                            <?php echo htmlspecialchars(substr($conversa['ultima_mensagem'] ?: 'Iniciar conversa...', 0, 50)); ?>
-                                            <?php if (strlen($conversa['ultima_mensagem']) > 50)
-                                                echo '...'; ?>
-                                        </p>
+                                        <p class="last-message"><?php echo $ultimaMensagem; ?></p>
                                     </div>
                                     <?php if ($conversa['mensagens_nao_lidas'] > 0): ?>
                                         <div class="unread-badge"><?php echo $conversa['mensagens_nao_lidas']; ?></div>
@@ -370,22 +434,19 @@ $resultConversas = mysqli_query($con, $sqlConversas);
             isLoadingMessages: false,
             updatingConversations: false,
             currentUserId: <?php echo $currentUserId; ?>,
-            pendingMessages: new Map() // Para rastrear mensagens sendo enviadas
+            pendingMessages: new Map()
         };
 
         document.addEventListener('DOMContentLoaded', function () {
-            // Iniciar polling das conversas
             startConversationPolling();
             checkConnection();
         });
 
-        // Sistema de polling em tempo real para conversas
         function startConversationPolling() {
             if (AppState.conversationPolling) {
                 clearInterval(AppState.conversationPolling);
             }
 
-            // Atualizar conversas a cada 3 segundos
             AppState.conversationPolling = setInterval(() => {
                 if (document.visibilityState === 'visible' && !AppState.updatingConversations) {
                     updateConversationsList();
@@ -393,13 +454,11 @@ $resultConversas = mysqli_query($con, $sqlConversas);
             }, 3000);
         }
 
-        // Sistema de polling em tempo real para mensagens
         function startMessagePolling() {
             if (AppState.messagePolling) {
                 clearInterval(AppState.messagePolling);
             }
 
-            // Verificar novas mensagens a cada 1 segundo
             AppState.messagePolling = setInterval(() => {
                 if (document.visibilityState === 'visible' && 
                     AppState.currentConversationId && 
@@ -409,7 +468,6 @@ $resultConversas = mysqli_query($con, $sqlConversas);
             }, 1000);
         }
 
-        // Verificar conexão
         function checkConnection() {
             const statusEl = document.getElementById('connectionStatus');
 
@@ -421,7 +479,6 @@ $resultConversas = mysqli_query($con, $sqlConversas);
                     statusEl.style.display = 'block';
                     setTimeout(() => statusEl.style.display = 'none', 2000);
                     
-                    // Retomar polling quando voltar online
                     startConversationPolling();
                     if (AppState.currentConversationId) {
                         startMessagePolling();
@@ -433,32 +490,26 @@ $resultConversas = mysqli_query($con, $sqlConversas);
                 statusEl.innerHTML = '<i class="fas fa-wifi-slash"></i> Sem conexão';
                 statusEl.style.display = 'block';
                 
-                // Parar polling quando offline
                 if (AppState.messagePolling) clearInterval(AppState.messagePolling);
                 if (AppState.conversationPolling) clearInterval(AppState.conversationPolling);
             }
         }
 
-        // Verificar conexão periodicamente
         setInterval(checkConnection, 5000);
         window.addEventListener('online', checkConnection);
         window.addEventListener('offline', checkConnection);
 
         function openConversation(conversationId, otherUserId) {
-            // Se já está na mesma conversa, não fazer nada
             if (AppState.currentConversationId === conversationId) return;
 
-            // Parar polling anterior
             if (AppState.messagePolling) {
                 clearInterval(AppState.messagePolling);
             }
 
-            // Atualizar o estado da aplicação
             AppState.currentConversationId = conversationId;
             AppState.currentOtherUserId = otherUserId;
             AppState.lastMessageId = 0;
 
-            // Marcar conversa como ativa na UI
             document.querySelectorAll('.conversation-item').forEach(item => {
                 item.classList.remove('active');
                 if (item.getAttribute('data-conversation-id') == conversationId) {
@@ -466,7 +517,6 @@ $resultConversas = mysqli_query($con, $sqlConversas);
                 }
             });
 
-            // Mostrar estado de carregamento
             const chatArea = document.getElementById('chatArea');
             chatArea.innerHTML = `
                 <div class="messages-loading">
@@ -474,13 +524,8 @@ $resultConversas = mysqli_query($con, $sqlConversas);
                 </div>
             `;
 
-            // Carregar as mensagens imediatamente
             loadMessages(true);
-
-            // Iniciar polling para novas mensagens
             startMessagePolling();
-
-            // Marcar mensagens como lidas
             markMessagesAsRead(conversationId);
         }
 
@@ -500,7 +545,6 @@ $resultConversas = mysqli_query($con, $sqlConversas);
                     if (data.success) {
                         displayMessages(data.messages, data.other_user, scrollToBottom);
                         
-                        // Atualizar último ID de mensagem
                         if (data.messages.length > 0) {
                             AppState.lastMessageId = Math.max(...data.messages.map(m => parseInt(m.id)));
                         }
@@ -524,7 +568,6 @@ $resultConversas = mysqli_query($con, $sqlConversas);
                 });
         }
 
-        // Nova função para carregar apenas mensagens novas
         function loadNewMessages() {
             if (!AppState.currentConversationId || AppState.isLoadingMessages) return;
 
@@ -537,22 +580,18 @@ $resultConversas = mysqli_query($con, $sqlConversas);
 
                         const wasScrolledToBottom = isScrolledToBottom(messagesContainer);
                         
-                        // Adicionar novas mensagens
                         data.messages.forEach(message => {
                             const messageElement = createMessageElement(message);
                             messageElement.classList.add('new-message');
                             messagesContainer.appendChild(messageElement);
                             
-                            // Atualizar último ID
                             AppState.lastMessageId = Math.max(AppState.lastMessageId, parseInt(message.id));
                         });
 
-                        // Scroll automático se estava no final
                         if (wasScrolledToBottom) {
                             scrollToBottomSmooth();
                         }
 
-                        // Marcar como lidas se necessário
                         markMessagesAsRead(AppState.currentConversationId);
                     }
                 })
@@ -564,13 +603,174 @@ $resultConversas = mysqli_query($con, $sqlConversas);
         function createMessageElement(message) {
             const messageDiv = document.createElement('div');
             messageDiv.className = `message ${message.remetente_id == AppState.currentUserId ? 'sent' : 'received'}`;
-            messageDiv.innerHTML = `
-                <div class="message-content">
-                    <p>${escapeHtml(message.conteudo)}</p>
-                    <span class="message-time">${formatTime(message.data_envio)}</span>
+            
+            if (message.tipo_mensagem === 'shared_post') {
+                const shareData = JSON.parse(message.conteudo);
+                messageDiv.innerHTML = createSharedPostHTML(shareData);
+            } else {
+                messageDiv.innerHTML = `
+                    <div class="message-content">
+                        <p>${escapeHtml(message.conteudo)}</p>
+                        <span class="message-time">${formatTime(message.data_envio)}</span>
+                    </div>
+                `;
+            }
+            
+            return messageDiv;
+        }
+
+        function createSharedPostHTML(shareData) {
+            let content = '<div class="message-content">';
+            
+            // Mensagem de partilha
+            if (shareData.message) {
+                content += `
+                    <div class="share-message">
+                        <div class="share-message-author">${shareData.shared_by.name} partilhou:</div>
+                        ${escapeHtml(shareData.message)}
+                    </div>
+                `;
+            }
+            
+            // Publicação partilhada - CLICÁVEL para ir para a publicação original
+            const postLink = shareData.post_link || `publicacao.php?id=${shareData.post.id}`;
+            content += `<div class="shared-post shared-post-interactive" onclick="goToOriginalPost('${postLink}')">`;
+            
+            // Header da publicação
+            content += `
+                <div class="shared-post-header">
+                    <img src="images/perfil/${shareData.post.author.photo || 'default-profile.jpg'}" 
+                         alt="${shareData.post.author.name}" class="shared-post-avatar">
+                    <div class="shared-post-author">
+                        <h5>${shareData.post.author.name}</h5>
+                        <p>@${shareData.post.author.nick}</p>
+                    </div>
+                    <div class="shared-post-date">${formatTime(shareData.post.date)}</div>
                 </div>
             `;
-            return messageDiv;
+            
+            // Conteúdo da publicação
+            content += '<div class="shared-post-content">';
+            
+            if (shareData.post.content) {
+                content += `<p class="shared-post-text">${escapeHtml(shareData.post.content)}</p>`;
+            }
+            
+            // Mídias
+            if (shareData.post.medias && shareData.post.medias.length > 0) {
+                content += createSharedMediaHTML(shareData.post.medias);
+            }
+            
+            // Poll
+            if (shareData.post.poll) {
+                content += createSharedPollHTML(shareData.post.poll);
+            }
+            
+            content += '</div>'; // shared-post-content
+            
+            // Stats da publicação
+            content += `
+                <div class="shared-post-stats">
+                    <div class="shared-post-likes">
+                        <i class="fas fa-thumbs-up"></i>
+                        <span>${shareData.post.likes}</span>
+                    </div>
+                    <div class="shared-post-date">${formatTime(shareData.post.date)}</div>
+                </div>
+            `;
+            
+            // Hint de clique
+            content += '<div class="shared-post-clickable-hint">Clique para ver</div>';
+            
+            content += '</div>'; // shared-post
+            content += `<span class="message-time">${formatTime(shareData.timestamp)}</span>`;
+            content += '</div>'; // message-content
+            
+            return content;
+        }
+
+        // Função para ir para a publicação original
+        function goToOriginalPost(postLink) {
+            // Abrir em nova aba para não perder a conversa
+            window.open(postLink, '_blank');
+        }
+
+        function createSharedMediaHTML(medias) {
+            if (!medias || medias.length === 0) return '';
+            
+            const mediaCount = medias.length;
+            let gridClass = 'single';
+            
+            if (mediaCount === 2) gridClass = 'double';
+            else if (mediaCount === 3) gridClass = 'triple';
+            else if (mediaCount >= 4) gridClass = 'quad';
+            
+            let html = `<div class="shared-post-media"><div class="shared-post-media-grid ${gridClass}">`;
+            
+            const displayCount = Math.min(mediaCount, 4);
+            
+            for (let i = 0; i < displayCount; i++) {
+                const media = medias[i];
+                html += '<div class="shared-post-media-item">';
+                
+                if (media.tipo === 'video') {
+                    html += `
+                        <video muted preload="metadata">
+                            <source src="images/publicacoes/${media.url}" type="video/mp4">
+                        </video>
+                        <div class="video-play-overlay">
+                            <i class="fas fa-play"></i>
+                        </div>
+                    `;
+                } else {
+                    html += `<img src="images/publicacoes/${media.url}" alt="Imagem partilhada" loading="lazy">`;
+                }
+                
+                if (i === 3 && mediaCount > 4) {
+                    html += `<div class="shared-post-media-more">+${mediaCount - 4}</div>`;
+                }
+                
+                html += '</div>';
+            }
+            
+            html += '</div></div>';
+            return html;
+        }
+
+        function createSharedPollHTML(poll) {
+            if (!poll) return '';
+            
+            let html = '<div class="shared-post-poll">';
+            html += `<div class="shared-poll-question">${escapeHtml(poll.pergunta)}</div>`;
+            
+            if (poll.opcoes && poll.opcoes.length > 0) {
+                poll.opcoes.forEach(opcao => {
+                    const percentage = poll.total_votos > 0 ? 
+                        Math.round((opcao.votos / poll.total_votos) * 100) : 0;
+                    
+                    html += `
+                        <div class="shared-poll-option">
+                            <div class="shared-poll-option-progress" style="width: ${percentage}%"></div>
+                            <div class="shared-poll-option-content">
+                                <span class="shared-poll-option-text">${escapeHtml(opcao.opcao_texto)}</span>
+                                <span class="shared-poll-option-percentage">${percentage}%</span>
+                            </div>
+                        </div>
+                    `;
+                });
+            }
+            
+            html += `
+                <div class="shared-poll-meta">
+                    <span>${poll.total_votos} voto${poll.total_votos !== 1 ? 's' : ''}</span>
+                    <span class="shared-poll-status ${poll.expirada ? 'expired' : 'active'}">
+                        ${poll.expirada ? 'Encerrada' : 'Ativa'}
+                    </span>
+                </div>
+            `;
+            
+            html += '</div>';
+            return html;
         }
 
         function markMessagesAsRead(conversationId) {
@@ -582,7 +782,6 @@ $resultConversas = mysqli_query($con, $sqlConversas);
                 .then(response => response.json())
                 .then(data => {
                     if (data.success && data.marked_as_read > 0) {
-                        // Disparar evento para atualizar a sidebar
                         const event = new CustomEvent('unreadCountUpdated', {
                             detail: { 
                                 change: -data.marked_as_read,
@@ -591,13 +790,11 @@ $resultConversas = mysqli_query($con, $sqlConversas);
                         });
                         document.dispatchEvent(event);
 
-                        // Para atualizar em outras abas
                         localStorage.setItem('unreadCountUpdate', JSON.stringify({
                             newCount: data.new_unread_count || 0,
                             timestamp: Date.now()
                         }));
 
-                        // Atualizar o badge na lista de conversas
                         updateConversationBadge(conversationId, 0);
                     }
                 });
@@ -618,7 +815,6 @@ $resultConversas = mysqli_query($con, $sqlConversas);
         function displayMessages(messages, otherUser, scrollToBottom = true) {
             const chatArea = document.getElementById('chatArea');
 
-            // Criar cabeçalho do chat
             const chatHeader = `
                 <div class="chat-header">
                     <img src="images/perfil/${otherUser.foto_perfil || 'default-profile.jpg'}" 
@@ -655,14 +851,25 @@ $resultConversas = mysqli_query($con, $sqlConversas);
         }
 
         function generateMessagesHTML(messages) {
-            return messages.map(message => `
-                <div class="message ${message.remetente_id == AppState.currentUserId ? 'sent' : 'received'}">
-                    <div class="message-content">
-                        <p>${escapeHtml(message.conteudo)}</p>
-                        <span class="message-time">${formatTime(message.data_envio)}</span>
-                    </div>
-                </div>
-            `).join('');
+            return messages.map(message => {
+                if (message.tipo_mensagem === 'shared_post') {
+                    const shareData = JSON.parse(message.conteudo);
+                    return `
+                        <div class="message ${message.remetente_id == AppState.currentUserId ? 'sent' : 'received'}">
+                            ${createSharedPostHTML(shareData)}
+                        </div>
+                    `;
+                } else {
+                    return `
+                        <div class="message ${message.remetente_id == AppState.currentUserId ? 'sent' : 'received'}">
+                            <div class="message-content">
+                                <p>${escapeHtml(message.conteudo)}</p>
+                                <span class="message-time">${formatTime(message.data_envio)}</span>
+                            </div>
+                        </div>
+                    `;
+                }
+            }).join('');
         }
 
         function isScrolledToBottom(element) {
@@ -690,16 +897,10 @@ $resultConversas = mysqli_query($con, $sqlConversas);
 
             if (!content || !AppState.currentConversationId) return;
 
-            // Gerar ID temporário para a mensagem
             const tempId = 'temp_' + Date.now();
-            
-            // Limpar input imediatamente
             messageInput.value = '';
-
-            // Adicionar mensagem temporária com indicador de envio
             addTemporaryMessage(content, tempId);
 
-            // Enviar mensagem
             fetch('../backend/send_message.php', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -707,15 +908,11 @@ $resultConversas = mysqli_query($con, $sqlConversas);
             })
                 .then(response => response.json())
                 .then(data => {
-                    // Remover mensagem temporária
                     removeTemporaryMessage(tempId);
                     
                     if (data.success) {
-                        // A nova mensagem será carregada automaticamente pelo polling
-                        // Atualizar lista de conversas
                         updateConversationsList();
                     } else {
-                        // Se falhou, restaurar o texto
                         messageInput.value = content;
                         showErrorMessage('Erro ao enviar mensagem. Tente novamente.');
                     }
@@ -753,7 +950,6 @@ $resultConversas = mysqli_query($con, $sqlConversas);
         }
 
         function showErrorMessage(message) {
-            // Implementar notificação de erro
             console.error(message);
         }
 
@@ -813,11 +1009,7 @@ $resultConversas = mysqli_query($con, $sqlConversas);
                 .then(data => {
                     if (data.success) {
                         closeNewMessageModal();
-
-                        // Atualizar lista de conversas
                         updateConversationsList();
-
-                        // Abrir a conversa após um pequeno delay
                         setTimeout(() => {
                             openConversation(data.conversation_id, data.other_user.id);
                         }, 500);
@@ -832,7 +1024,6 @@ $resultConversas = mysqli_query($con, $sqlConversas);
         }
 
         function updateConversationsList() {
-            // Verificar se já está atualizando para evitar chamadas redundantes
             if (AppState.updatingConversations) return;
             AppState.updatingConversations = true;
 
@@ -859,6 +1050,26 @@ $resultConversas = mysqli_query($con, $sqlConversas);
                             newHTML = data.conversations.map(conversation => {
                                 const otherUser = conversation.other_user;
                                 const isActive = AppState.currentConversationId == conversation.id ? 'active' : '';
+                                
+                                // Determinar texto da última mensagem
+                                let lastMessageText = 'Iniciar conversa...';
+                                if (conversation.ultima_mensagem) {
+                                    // Verificar se é uma publicação partilhada
+                                    try {
+                                        const shareData = JSON.parse(conversation.ultima_mensagem);
+                                        if (shareData.type === 'shared_post') {
+                                            lastMessageText = '📤 Publicação partilhada';
+                                        } else {
+                                            lastMessageText = escapeHtml(conversation.ultima_mensagem.substring(0, 50));
+                                            if (conversation.ultima_mensagem.length > 50) lastMessageText += '...';
+                                        }
+                                    } catch (e) {
+                                        // Se não for JSON, é uma mensagem normal
+                                        lastMessageText = escapeHtml(conversation.ultima_mensagem.substring(0, 50));
+                                        if (conversation.ultima_mensagem.length > 50) lastMessageText += '...';
+                                    }
+                                }
+                                
                                 return `
                                     <div class="conversation-item ${isActive}" data-conversation-id="${conversation.id}" onclick="openConversation(${conversation.id}, ${otherUser.id})">
                                         <img src="images/perfil/${otherUser.foto || 'default-profile.jpg'}" 
@@ -870,10 +1081,7 @@ $resultConversas = mysqli_query($con, $sqlConversas);
                                                     ${formatTime(conversation.ultima_atividade)}
                                                 </span>
                                             </div>
-                                            <p class="last-message">
-                                                ${conversation.ultima_mensagem ? escapeHtml(conversation.ultima_mensagem.substring(0, 50)) : 'Iniciar conversa...'}
-                                                ${conversation.ultima_mensagem && conversation.ultima_mensagem.length > 50 ? '...' : ''}
-                                            </p>
+                                            <p class="last-message">${lastMessageText}</p>
                                         </div>
                                         ${conversation.mensagens_nao_lidas > 0 ?
                                             `<div class="unread-badge">${conversation.mensagens_nao_lidas}</div>` : ''}
@@ -882,7 +1090,6 @@ $resultConversas = mysqli_query($con, $sqlConversas);
                             }).join('');
                         }
 
-                        // Só atualizar o DOM se o conteúdo mudou
                         if (currentHTML !== newHTML) {
                             conversationsList.innerHTML = newHTML;
                         }
@@ -908,26 +1115,23 @@ $resultConversas = mysqli_query($con, $sqlConversas);
             }
         }
 
-        // Fechar modal ao clicar fora
+        // Event listeners
         document.getElementById('newMessageModal').addEventListener('click', function (e) {
             if (e.target === this) {
                 closeNewMessageModal();
             }
         });
 
-        // Cleanup ao sair da página
         window.addEventListener('beforeunload', function () {
             if (AppState.messagePolling) clearInterval(AppState.messagePolling);
             if (AppState.conversationPolling) clearInterval(AppState.conversationPolling);
         });
 
-        // Pausar polling quando a página não está visível
         document.addEventListener('visibilitychange', function () {
             if (document.visibilityState === 'hidden') {
                 if (AppState.messagePolling) clearInterval(AppState.messagePolling);
                 if (AppState.conversationPolling) clearInterval(AppState.conversationPolling);
             } else {
-                // Retomar polling quando voltar à página
                 startConversationPolling();
                 if (AppState.currentConversationId) {
                     startMessagePolling();
@@ -935,7 +1139,6 @@ $resultConversas = mysqli_query($con, $sqlConversas);
             }
         });
 
-        // Debounce para pesquisa
         let searchTimeout;
         document.getElementById('userSearch').addEventListener('input', function () {
             clearTimeout(searchTimeout);

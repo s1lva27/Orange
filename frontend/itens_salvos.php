@@ -139,6 +139,7 @@ $perfilData = mysqli_fetch_assoc($resultPerfil);
     <link rel="stylesheet" href="css/app.css">
     <link rel="stylesheet" href="css/style_polls.css">
     <link rel="stylesheet" href="css/video_player.css">
+    <link rel="stylesheet" href="css/style_share.css">
     <link rel="icon" type="image/x-icon" href="images/favicon/favicon_orange.png">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
@@ -516,7 +517,9 @@ $perfilData = mysqli_fetch_assoc($resultPerfil);
                                     <span
                                         class="comment-count"><?php echo getCommentCount($con, $linha['id_publicacao']); ?></span>
                                 </button>
-                                <button><i class="fas fa-share"></i></button>
+                                <button class="share-btn" onclick="openShareModal(<?php echo $publicacaoId; ?>)">
+                                    <i class="fas fa-share"></i>
+                                </button>
                                 <button class="save-btn <?php echo $savedClass; ?>"
                                     data-publicacao-id="<?php echo $publicacaoId; ?>">
                                     <i class="fas fa-bookmark"></i>
@@ -552,6 +555,7 @@ $perfilData = mysqli_fetch_assoc($resultPerfil);
     <!-- Include Video Player JavaScript -->
     <script src="js/video-player.js"></script>
     <script src="js/polls.js"></script>
+    <script src="js/share-post.js"></script>
 
     <script>
         // Função para votar em uma poll

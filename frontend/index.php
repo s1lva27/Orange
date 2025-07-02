@@ -61,9 +61,19 @@ function getPollData($con, $publicacaoId, $userId = null)
             ORDER BY po.ordem ASC";
     
     $stmt = $con->prepare($sql);
+    if (!$stmt) {
+        error_log("Failed to prepare poll data query: " . $con->error);
+        return null;
+    }
+    
     $stmt->bind_param("i", $publicacaoId);
     $stmt->execute();
     $result = $stmt->get_result();
+
+    if ($result === false) {
+        error_log("Failed to get result for poll data: " . $stmt->error);
+        return null;
+    }
 
     if ($result->num_rows === 0) {
         return null;
@@ -96,7 +106,7 @@ function getPollData($con, $publicacaoId, $userId = null)
     $userVoted = false;
     $userVotedOption = null;
     
-    if ($userId > 0) {
+    if ($userId > 0 && $pollData) {
         $sqlUserVote = "SELECT opcao_id FROM poll_votos WHERE poll_id = ? AND utilizador_id = ?";
         $stmtUserVote = $con->prepare($sqlUserVote);
         if ($stmtUserVote) {
@@ -104,11 +114,15 @@ function getPollData($con, $publicacaoId, $userId = null)
             $stmtUserVote->execute();
             $voteResult = $stmtUserVote->get_result();
             
-            if ($voteResult->num_rows > 0) {
+            if ($voteResult === false) {
+                error_log("Failed to get result for user vote: " . $stmtUserVote->error);
+            } else if ($voteResult->num_rows > 0) {
                 $userVoted = true;
                 $voteData = $voteResult->fetch_assoc();
                 $userVotedOption = intval($voteData['opcao_id']);
             }
+        } else {
+            error_log("Failed to prepare user vote query: " . $con->error);
         }
     }
 
@@ -386,7 +400,7 @@ $perfilData = mysqli_fetch_assoc($resultPerfil);
                                 <?php if ($linha['tipo'] === 'poll'): ?>
                                     <?php 
                                     $pollData = getPollData($con, $linha['id_publicacao'], $_SESSION['id']);
-                                    if ($pollData): 
+                                    if (is_array($pollData) && array_key_exists('poll', $pollData) && is_array($pollData['poll'])): 
                                     ?>
                                         <div class="poll-container" data-poll-id="<?php echo $pollData['poll']['id']; ?>">
                                             <div class="poll-question"><?php echo htmlspecialchars($pollData['poll']['pergunta']); ?></div>

@@ -575,3 +575,35 @@
 .share-poll-status.expired {
     color: var(--color-danger);
 }
+
+/* Adicione ao final do arquivo */
+.share-users-slash {
+    font-size: 2rem;
+    margin-bottom: var(--space-md);
+    color: var(--text-muted);
+    opacity: 0.7;
+}
+
+.share-no-users small {
+    display: block;
+    margin-top: var(--space-xs);
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+.share-user-item.highlight {
+    background-color: rgba(255, 87, 34, 0.05);
+    border-left: 3px solid var(--color-primary);
+}
+
+.share-search-loading {
+    position: absolute;
+    right: 15px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--text-muted);
+}
+
+.share-search-loading i {
+    animation: spin 1s linear infinite;
+}

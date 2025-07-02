@@ -119,6 +119,61 @@ class SharePostManager {
             }
         });
     }
+    async loadUsers() {
+        const usersList = document.getElementById('shareUsersList');
+        usersList.innerHTML = '<div class="share-loading active"><i class="fas fa-spinner"></i> Carregando utilizadores...</div>';
+
+        try {
+            // Buscar conversas do utilizador
+            const response = await fetch('../backend/get_conversations.php');
+            if (!response.ok) throw new Error('Erro ao carregar conversas');
+
+            const data = await response.json();
+
+            if (!data.success || !data.conversations) {
+                throw new Error('Nenhuma conversa encontrada');
+            }
+
+            // Processar os dados para extrair os utilizadores
+            this.allUsers = data.conversations.map(conv => {
+                // Garantir que temos os dados mínimos necessários
+                if (!conv.other_user || !conv.other_user.id) {
+                    return null;
+                }
+
+                return {
+                    id: conv.other_user.id,
+                    nome_completo: conv.other_user.nome || conv.other_user.nick || 'Utilizador',
+                    nick: conv.other_user.nick || 'user' + conv.other_user.id,
+                    foto_perfil: conv.other_user.foto || 'default-profile.jpg'
+                };
+            }).filter(user => user !== null); // Remover nulls se houver
+
+            this.filteredUsers = [...this.allUsers];
+
+            if (this.allUsers.length === 0) {
+                this.showNoUsersMessage("Você ainda não tem conversas com outros utilizadores");
+            } else {
+                this.renderUsers();
+            }
+        } catch (error) {
+            console.error('Erro ao carregar utilizadores:', error);
+            this.showNoUsersMessage(error.message || 'Erro ao carregar utilizadores');
+        }
+    }
+
+    // Adicione este método para mostrar mensagens de erro personalizadas
+    showNoUsersMessage(message = 'Nenhum utilizador encontrado') {
+        const usersList = document.getElementById('shareUsersList');
+        usersList.innerHTML = `
+        <div class="share-no-users">
+            <i class="fas fa-users-slash"></i>
+            <p>${this.escapeHtml(message)}</p>
+            <small>Tente novamente mais tarde</small>
+        </div>
+    `;
+    }
+
     // Adicionar esta função à classe SharePostManager
     async loadPostPreview(postId) {
         try {
@@ -294,6 +349,17 @@ class SharePostManager {
             `;
         }
     }
+    // Adicione este método para mostrar mensagem quando não há utilizadores
+    showNoUsersMessage() {
+        const usersList = document.getElementById('shareUsersList');
+        usersList.innerHTML = `
+        <div class="share-no-users">
+            <i class="fas fa-users-slash"></i>
+            <p>Nenhum utilizador encontrado</p>
+            <small>Tente pesquisar com termos diferentes</small>
+        </div>
+    `;
+    }
 
     async loadUsers() {
         const usersList = document.getElementById('shareUsersList');
@@ -318,17 +384,23 @@ class SharePostManager {
 
     filterUsers(searchTerm) {
         const term = searchTerm.toLowerCase().trim();
+        const usersList = document.getElementById('shareUsersList');
 
         if (term === '') {
             this.filteredUsers = this.allUsers;
         } else {
-            this.filteredUsers = this.allUsers.filter(user =>
-                user.nome_completo.toLowerCase().includes(term) ||
-                user.nick.toLowerCase().includes(term)
-            );
+            this.filteredUsers = this.allUsers.filter(user => {
+                const fullName = user.nome_completo?.toLowerCase() || '';
+                const nick = user.nick?.toLowerCase() || '';
+                return fullName.includes(term) || nick.includes(term);
+            });
         }
 
-        this.renderUsers();
+        if (this.filteredUsers.length === 0) {
+            this.showNoUsersMessage();
+        } else {
+            this.renderUsers();
+        }
     }
 
     renderUsers() {
@@ -336,33 +408,36 @@ class SharePostManager {
 
         if (this.filteredUsers.length === 0) {
             usersList.innerHTML = `
-                <div class="share-no-users">
-                    <i class="fas fa-users"></i>
-                    <p>Nenhum utilizador encontrado</p>
-                </div>
-            `;
+            <div class="share-no-users">
+                <i class="fas fa-users-slash"></i>
+                <p>Nenhum utilizador encontrado</p>
+                <small>Tente pesquisar com termos diferentes</small>
+            </div>
+        `;
             return;
         }
 
         const usersHTML = this.filteredUsers.map(user => `
-            <div class="share-user-item ${this.selectedUsers.has(user.id) ? 'selected' : ''}" 
-                 onclick="sharePostManager.toggleUser(${user.id})">
-                <input type="checkbox" 
-                       class="share-user-checkbox" 
-                       ${this.selectedUsers.has(user.id) ? 'checked' : ''}
-                       onchange="sharePostManager.toggleUser(${user.id})"
-                       onclick="event.stopPropagation()">
-                <img src="images/perfil/${user.foto_perfil || 'default-profile.jpg'}" 
-                     alt="${user.nome_completo}" class="share-user-avatar">
-                <div class="share-user-info">
-                    <h4 class="share-user-name">${this.escapeHtml(user.nome_completo)}</h4>
-                    <p class="share-user-nick">@${this.escapeHtml(user.nick)}</p>
-                </div>
+        <div class="share-user-item ${this.selectedUsers.has(user.id) ? 'selected' : ''}" 
+             onclick="sharePostManager.toggleUser(${user.id})">
+            <input type="checkbox" 
+                   class="share-user-checkbox" 
+                   ${this.selectedUsers.has(user.id) ? 'checked' : ''}
+                   onchange="sharePostManager.toggleUser(${user.id})"
+                   onclick="event.stopPropagation()">
+            <img src="images/perfil/${user.foto_perfil || 'default-profile.jpg'}" 
+                 alt="${user.nome_completo}" class="share-user-avatar">
+            <div class="share-user-info">
+                <h4 class="share-user-name">${this.escapeHtml(user.nome_completo)}</h4>
+                <p class="share-user-nick">@${this.escapeHtml(user.nick)}</p>
             </div>
-        `).join('');
+        </div>
+    `).join('');
 
         usersList.innerHTML = usersHTML;
     }
+
+
 
     toggleUser(userId) {
         if (this.selectedUsers.has(userId)) {

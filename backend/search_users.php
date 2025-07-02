@@ -5,29 +5,41 @@ require "ligabd.php";
 header('Content-Type: application/json');
 
 if (!isset($_SESSION['id'])) {
-    echo json_encode([]);
-    exit;
-}
-
-if (!isset($_GET['q']) || strlen(trim($_GET['q'])) < 2) {
-    echo json_encode([]);
+    echo json_encode(['error' => 'Não autenticado']);
     exit;
 }
 
 $currentUserId = $_SESSION['id'];
-$query = trim($_GET['q']);
-$searchTerm = '%' . $query . '%';
+$query = isset($_GET['q']) ? trim($_GET['q']) : '';
 
-$sql = "SELECT u.id, u.nick, u.nome_completo, p.foto_perfil 
+// Se a query estiver vazia, retorna os últimos utilizadores ativos
+if (empty($query)) {
+    $sql = "SELECT u.id, u.nick, u.nome_completo, p.foto_perfil 
+            FROM utilizadores u 
+            LEFT JOIN perfis p ON u.id = p.id_utilizador 
+            WHERE u.id != ? 
+            ORDER BY u.ultimo_login DESC 
+            LIMIT 10";
+    $stmt = $con->prepare($sql);
+    $stmt->bind_param("i", $currentUserId);
+} else {
+    $searchTerm = '%' . $query . '%';
+    $sql = "SELECT u.id, u.nick, u.nome_completo, p.foto_perfil 
         FROM utilizadores u 
         LEFT JOIN perfis p ON u.id = p.id_utilizador 
         WHERE u.id != ? 
         AND (u.nome_completo LIKE ? OR u.nick LIKE ?)
-        ORDER BY u.nome_completo ASC 
+        ORDER BY 
+            CASE 
+                WHEN u.nome_completo LIKE ? THEN 0
+                WHEN u.nick LIKE ? THEN 1
+                ELSE 2
+            END
         LIMIT 10";
+    $stmt = $con->prepare($sql);
+    $stmt->bind_param("issss", $currentUserId, $searchTerm, $searchTerm, $searchTerm, $searchTerm);
+}
 
-$stmt = $con->prepare($sql);
-$stmt->bind_param("iss", $currentUserId, $searchTerm, $searchTerm);
 $stmt->execute();
 $result = $stmt->get_result();
 
